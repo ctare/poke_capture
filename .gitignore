@@ -1,2 +1,4 @@
 .python-version
-hog_data.npy
+.DS_store
+*.jpg
+*.npy
