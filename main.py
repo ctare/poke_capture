@@ -197,10 +197,10 @@ def trans_noise(img):
     x, y = np.random.normal(loc=0., scale=2., size=2)
     return affine(img, p, [[16 + x, y], [x, 32 + y], [32 + x, 32 + y]])
 
-imgs = np.array([cv2.resize(imread(x), (32, 32)) for x in labels])
-onehot = np.eye(len(labels), dtype=np.float32)
-
-img_indices = list(range(len(imgs)))
+# imgs = np.array([cv2.resize(imread(x), (32, 32)) for x in labels])
+# onehot = np.eye(len(labels), dtype=np.float32)
+# 
+# img_indices = list(range(len(imgs)))
 
 def proc(imgs, indices):
     r = random.getrandbits(30)
@@ -363,11 +363,12 @@ t_data = debug_img() # ./sample.jpg
 # t_data = debug_img(img) # numpyデータを直接入れる際
 numbers, index = clustering(t_data)
 
+print(numbers + 1)
 
-pylab.subplot(2, 1, 1)
-pylab.axis("off")
-pylab.imshow(pv(imgs[numbers,], 6, 1).astype(np.uint8))
-pylab.subplot(2, 1, 2)
-pylab.axis("off")
-pylab.imshow(pv(t_data[index] * 255, 6, 1).astype(np.uint8))
-pylab.show()
+# pylab.subplot(2, 1, 1)
+# pylab.axis("off")
+# pylab.imshow(pv(imgs[numbers,], 6, 1).astype(np.uint8))
+# pylab.subplot(2, 1, 2)
+# pylab.axis("off")
+# pylab.imshow(pv(t_data[index] * 255, 6, 1).astype(np.uint8))
+# pylab.show()
