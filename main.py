@@ -253,7 +253,9 @@ rdep_cnt = 0
 def rdep(layer, kernel_size, depth_multiplier, dropout=None):
     global rdep_cnt
     with tf.variable_scope("rdep_{}".format(rdep_cnt)):
-        dep = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=depth_multiplier, padding="same")(layer)
+        dep = tf.keras.layers.DepthwiseConv2D([1, kernel_size], depth_multiplier=depth_multiplier, padding="same")(layer)
+        dep = tf.keras.layers.DepthwiseConv2D([kernel_size, 1], depth_multiplier=1, padding="same")(dep)
+
         dep = tf.reshape(dep, (-1, *layer.shape[1:], depth_multiplier))
         dep = tf.transpose(dep, (0, 4, 1, 2, 3)) + tf.expand_dims(layer, 1)
         dep = tf.transpose(dep, (0, 2, 3, 1, 4))
@@ -268,9 +270,17 @@ rpool_cnt = 0
 def rpool(layer, kernel_size, depth_multiplier, stride=2, padding="same", dropout=None):
     global rpool_cnt
     with tf.variable_scope("rpool_{}".format(rpool_cnt)):
-        pool = tf.contrib.slim.max_pool2d(layer, kernel_size, stride=stride, padding=padding)
-        dep = tf.keras.layers.DepthwiseConv2D(kernel_size, strides=stride, depth_multiplier=depth_multiplier, padding=padding)(layer)
-        dep = tf.reshape(dep, (-1, *pool.shape[1:], depth_multiplier))
+        pool = tf.contrib.slim.max_pool2d(layer, [1, kernel_size], stride=[1, stride], padding=padding)
+        pool = tf.contrib.slim.max_pool2d(pool, [kernel_size, 1], stride=[stride, 1], padding=padding)
+
+        first, second = (depth_multiplier + 1) // 2, depth_multiplier // 2
+        dep1 = tf.keras.layers.DepthwiseConv2D(kernel_size, strides=stride, depth_multiplier=first, padding=padding)(layer)
+        dep1 = tf.reshape(dep1, (-1, *pool.shape[1:], first))
+
+        dep2 = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=second, padding="same")(pool)
+        dep2 = tf.reshape(dep2, (-1, *pool.shape[1:], second))
+
+        dep = tf.concat([dep1, dep2], axis=-1)
         dep = tf.transpose(dep, (0, 4, 1, 2, 3)) + tf.expand_dims(pool, 1)
         dep = tf.transpose(dep, (0, 2, 3, 1, 4))
         dep = tf.reshape(dep, (-1, *pool.shape[1:-1], pool.shape[-1] * depth_multiplier))
@@ -300,7 +310,7 @@ with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.sli
     x.shape
     x = rpool(x, 3, 6)
     x.shape
-    x = rpool(x, 3, 4)
+    x = rpool(x, 3, 4, padding="valid")
     x.shape
     x = pointwise(x, 256)
     x.shape
@@ -337,7 +347,7 @@ with tf.name_scope("summary"):
     result_log = tf.summary.merge([acc_log, loss_log, decoder_log])
     input_log = tf.summary.image("img", img, 10)
 
-logdir="./pkcp_logs/t105_rdep_rpool_se_normal/"
+logdir="./pkcp_logs/t105_rdep_rpool_se_sep/"
 #%%
 step = 0
 sess = tf.Session()
@@ -365,7 +375,7 @@ summaries = [main_summary, train_summary, train_input_summary, test_summary, tes
 true_label = onehot[test_label,]
 batch_n = 6
 with tf.device("/device:GPU:0"):
-    for epoch in (range(10000)):
+    for epoch in (range(5000)):
         random.shuffle(img_indices)
 
         batch_n = 128
