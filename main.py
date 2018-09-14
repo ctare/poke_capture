@@ -46,7 +46,18 @@ def plt(imgs, hs, ws):
             cnt += 1
     return np.clip(view, 0, 1)
 
+#create test data
+test_data = np.array([(cv2.resize(x, (size, size))) for x in np.load("six_test70x70.npy")]) / 255.
+test_label = np.array([796, 129, 680, 444, 784, 232])
 
+ext_test_data = np.ones((0, 50, 50, 3))
+ext_test_label = np.ones((0, ))
+for filename in glob("pkcp_test_data/*"):
+    (_, l), (_, d) = np.load(filename).items()
+    ext_test_data = np.concatenate((ext_test_data, d))
+    ext_test_label = np.concatenate((ext_test_label, l))
+test_data = np.concatenate([test_data, ext_test_data])
+test_label = np.concatenate([test_label, ext_test_label]).astype(np.int) + 1
 # labels = [
 #         233, 445, 797, 785, 130, 681,
 #         232, 444, 796, 784, 129, 680,
@@ -69,7 +80,11 @@ def plt(imgs, hs, ws):
 #         # 184, 444, 443, 552, 144, 117,
 #         #mrl gbyt hkml wrbr frzr shdr
 #         ] + list(range(6, 114))
-labels = list(range(1, 807 + 1))
+# labels = list(range(1, 807 + 1))
+labels = np.array(list(set(np.concatenate((test_label, test_label - 1)))))
+test_label = (labels == np.array([test_label]).T).argmax(axis=1)
+pylab.imshow(test_data[0])
+pylab.imshow(imgs[labels[test_label[0]]])
 
 if len(labels) != len(set(labels)):
     warnings.warn("labels dupulicated!!!!!!!!")
@@ -155,19 +170,6 @@ imgs = np.array([cv2.resize(imread(x), (32, 32)) for x in labels])
 onehot = np.eye(len(labels), dtype=np.float32)
 
 img_indices = list(range(len(imgs)))
-
-#create test data
-test_data = np.array([(cv2.resize(x, (size, size))) for x in np.load("six_test70x70.npy")]) / 255.
-test_label = np.array([796, 129, 680, 444, 784, 232])
-
-ext_test_data = np.ones((0, 50, 50, 3))
-ext_test_label = np.ones((0, ))
-for filename in glob("pkcp_test_data/*"):
-    (_, l), (_, d) = np.load(filename).items()
-    ext_test_data = np.concatenate((ext_test_data, d))
-    ext_test_label = np.concatenate((ext_test_label, l))
-test_data = np.concatenate([test_data, ext_test_data])
-test_label = np.concatenate([test_label, ext_test_label]).astype(np.int)
 
 def proc(imgs, indices):
     r = random.getrandbits(30)
@@ -316,11 +318,11 @@ with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.sli
     x.shape
 
     with tf.variable_scope("block"):
-        for i in range(5):
+        for i in range(8):
             x = residual(x, 256, use_se=True)
 
-    x = pointwise(x, 512)
-    x = rpool(x, 3, 2)
+    # x = pointwise(x, 512)
+    x = rpool(x, 3, 4)
     x.shape
 
     with tf.variable_scope("pred"):
@@ -347,7 +349,7 @@ with tf.name_scope("summary"):
     result_log = tf.summary.merge([acc_log, loss_log, decoder_log])
     input_log = tf.summary.image("img", img, 10)
 
-logdir="./pkcp_logs/t105_rdep_rpool_se_sep/"
+logdir="./pkcp_logs_small/t105_rdep_rpool_se_sep_minidense/"
 #%%
 step = 0
 sess = tf.Session()
@@ -373,12 +375,12 @@ summaries = [main_summary, train_summary, train_input_summary, test_summary, tes
 # t_ = proc(imgs, true_label_indices)
 
 true_label = onehot[test_label,]
-batch_n = 6
+batch_n = 128
+batch_n = len(labels)
 with tf.device("/device:GPU:0"):
     for epoch in (range(5000)):
         random.shuffle(img_indices)
 
-        batch_n = 128
         losses = []
         for target in zip(*[iter(img_indices)]* batch_n):
             # target = img_indices
@@ -398,21 +400,22 @@ with tf.device("/device:GPU:0"):
         # pylab.imshow(data[0])
         # pylab.imshow(imgs[np.argmax(onehot[target,], 1)[0]])
 
-        random.shuffle(img_indices)
-        target = img_indices[:105]
-        t = proc(imgs, target)
-        result, result_input = sess.run([result_log, input_log], feed_dict={inp: t, label: onehot[target,], log_img: imgs})
-        train_summary.add_summary(result, step)
-        train_input_summary.add_summary(result_input, step)
+        if epoch % 100 == 0:
+            random.shuffle(img_indices)
+            target = img_indices[:105]
+            t = proc(imgs, target)
+            result, result_input = sess.run([result_log, input_log], feed_dict={inp: t, label: onehot[target,], log_img: imgs})
+            train_summary.add_summary(result, step)
+            train_input_summary.add_summary(result_input, step)
 
         t = test_data
-        # t = t_data2
         result, result_input = sess.run([result_log, input_log], feed_dict={inp: t, label: true_label, log_img: imgs})
         test_summary.add_summary(result, step)
         test_input_summary.add_summary(result_input, step)
 
-        for i in summaries:
-            i.flush()
+        if epoch % 100 == 0:
+            for i in summaries:
+                i.flush()
         step += 1
 print("ok")
 
