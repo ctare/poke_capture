@@ -255,8 +255,11 @@ rdep_cnt = 0
 def rdep(layer, kernel_size, depth_multiplier, dropout=None):
     global rdep_cnt
     with tf.variable_scope("rdep_{}".format(rdep_cnt)):
-        dep = tf.keras.layers.DepthwiseConv2D([1, kernel_size], depth_multiplier=depth_multiplier, padding="same")(layer)
-        dep = tf.keras.layers.DepthwiseConv2D([kernel_size, 1], depth_multiplier=1, padding="same")(dep)
+        dep = tf.keras.layers.DepthwiseConv2D([1, kernel_size], depth_multiplier=depth_multiplier, padding="same", use_bias=False)(layer)
+        dep = tf.keras.layers.DepthwiseConv2D([kernel_size, 1], depth_multiplier=1, padding="same", use_bias=False)(dep)
+        dep = tf.contrib.slim.batch_norm(dep, renorm=True)
+        # dep = tf.nn.relu(dep)
+        dep = tf.keras.layers.PReLU()(dep)
 
         dep = tf.reshape(dep, (-1, *layer.shape[1:], depth_multiplier))
         dep = tf.transpose(dep, (0, 4, 1, 2, 3)) + tf.expand_dims(layer, 1)
@@ -276,13 +279,17 @@ def rpool(layer, kernel_size, depth_multiplier, stride=2, padding="same", dropou
         pool = tf.contrib.slim.max_pool2d(pool, [kernel_size, 1], stride=[stride, 1], padding=padding)
 
         first, second = (depth_multiplier + 1) // 2, depth_multiplier // 2
-        dep1 = tf.keras.layers.DepthwiseConv2D(kernel_size, strides=stride, depth_multiplier=first, padding=padding)(layer)
+        dep1 = tf.keras.layers.DepthwiseConv2D(kernel_size, strides=stride, depth_multiplier=first, padding=padding, use_bias=False)(layer)
         dep1 = tf.reshape(dep1, (-1, *pool.shape[1:], first))
 
-        dep2 = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=second, padding="same")(pool)
+        dep2 = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=second, padding="same", use_bias=False)(pool)
         dep2 = tf.reshape(dep2, (-1, *pool.shape[1:], second))
 
         dep = tf.concat([dep1, dep2], axis=-1)
+        dep = tf.contrib.slim.batch_norm(dep, renorm=True)
+        # dep = tf.nn.relu(dep)
+        dep = tf.keras.layers.PReLU()(dep)
+
         dep = tf.transpose(dep, (0, 4, 1, 2, 3)) + tf.expand_dims(pool, 1)
         dep = tf.transpose(dep, (0, 2, 3, 1, 4))
         dep = tf.reshape(dep, (-1, *pool.shape[1:-1], pool.shape[-1] * depth_multiplier))
@@ -302,9 +309,10 @@ def pointwise(layer, out_ch):
 
 with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.slim.conv2d],
     # activation_fn=functools.partial(tf.nn.leaky_relu, alpha=0.01),
+    activation_fn=lambda x: tf.keras.layers.PReLU()(x),
     normalizer_fn=functools.partial(tf.contrib.slim.batch_norm, renorm=True)), tf.contrib.slim.arg_scope([tf.contrib.slim.conv2d],
     # activation_fn=lambda x: tf.keras.layers.PReLU()(x),
-    activation_fn=tf.nn.leaky_relu,
+    # activation_fn=tf.nn.leaky_relu,
     ):
     x = img
 
@@ -318,7 +326,7 @@ with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.sli
     x.shape
 
     with tf.variable_scope("block"):
-        for i in range(8):
+        for i in range(5):
             x = residual(x, 256, use_se=True)
 
     # x = pointwise(x, 512)
@@ -349,7 +357,7 @@ with tf.name_scope("summary"):
     result_log = tf.summary.merge([acc_log, loss_log, decoder_log])
     input_log = tf.summary.image("img", img, 10)
 
-logdir="./pkcp_logs_small/t105_rdep_rpool_se_sep_minidense/"
+logdir="./pkcp_logs_small/t105_rdep_rpool_se_sep_PReLU_BN/"
 #%%
 step = 0
 sess = tf.Session()
