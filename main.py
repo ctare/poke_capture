@@ -83,8 +83,8 @@ test_label = np.concatenate([test_label, ext_test_label]).astype(np.int) + 1
 # labels = list(range(1, 807 + 1))
 labels = np.array(list(set(np.concatenate((test_label, test_label - 1)))))
 test_label = (labels == np.array([test_label]).T).argmax(axis=1)
-pylab.imshow(test_data[0])
-pylab.imshow(imgs[labels[test_label[0]]])
+# pylab.imshow(test_data[0])
+# pylab.imshow(imgs[labels[test_label[0]]])
 
 if len(labels) != len(set(labels)):
     warnings.warn("labels dupulicated!!!!!!!!")
@@ -318,7 +318,12 @@ with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.sli
     ):
     x = img
 
-    x = rdep(x, 3, 10, scale=1.)
+    x1 = rdep(x, 3, 2, scale=1.)
+    x2 = rdep(x, 4, 2, scale=1.)
+    x3 = rdep(x, 5, 2, scale=1.)
+    x4 = rdep(x, 6, 2, scale=1.)
+    x5 = rdep(x, 7, 2, scale=1.)
+    x = tf.concat([x1, x2, x3, x4, x5], axis=-1)
     x.shape
     x = rpool(x, 3, 6)
     x.shape
@@ -359,7 +364,7 @@ with tf.name_scope("summary"):
     result_log = tf.summary.merge([acc_log, loss_log, decoder_log])
     input_log = tf.summary.image("img", img, 10)
 
-logdir="./pkcp_logs_small/t105_rdep_rpool_se_sep_ReLU_BN_scale/"
+logdir="./pkcp_logs_small/t105_rdep_rpool_se_sep_inception/"
 #%%
 step = 0
 sess = tf.Session()
