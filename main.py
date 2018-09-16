@@ -321,13 +321,11 @@ with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.sli
     x1 = rdep(x, 3, 2, scale=1.)
     x2 = rdep(x, 4, 2, scale=1.)
     x3 = rdep(x, 5, 2, scale=1.)
-    x4 = rdep(x, 6, 2, scale=1.)
-    x5 = rdep(x, 7, 2, scale=1.)
-    x = tf.concat([x1, x2, x3, x4, x5], axis=-1)
+    x = tf.concat([x1, x2, x3], axis=-1)
     x.shape
-    x = rpool(x, 3, 6)
+    x = rpool(x, 3, 2)
     x.shape
-    x = rpool(x, 3, 4, padding="valid")
+    x = rpool(x, 3, 2, padding="valid")
     x.shape
     x = pointwise(x, 256)
     x.shape
@@ -388,6 +386,12 @@ summaries = [main_summary, train_summary, train_input_summary, test_summary, tes
 # true_label_indices = [232, 444, 796, 784, 129, 680]
 # true_label_indices = [796, 129, 680, 444, 784, 232]
 # t_ = proc(imgs, true_label_indices)
+
+# im = sess.run(tf.image.rgb_to_hsv(img), feed_dict={inp: [cv2.resize(imgs[39], (50, 50))], noisy:True})[0]
+# # im[..., 0] = 0.11
+# pylab.imshow(im[..., 0])
+# im_ = sess.run(tf.image.hsv_to_rgb(img), feed_dict={img: [im]})[0]
+# pylab.imshow(im_.astype(np.uint8)) and pylab.show()
 
 true_label = onehot[test_label,]
 batch_n = 128
