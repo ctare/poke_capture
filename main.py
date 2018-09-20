@@ -11,6 +11,7 @@ import warnings
 from glob import glob
 
 #%% data
+pi180 = np.pi / 180 * 360
 size = 50
 def mapfunc(f):
     return lambda *data: np.array([f(*x) for x in zip(*data)])
@@ -181,6 +182,11 @@ def proc(imgs, indices):
     fake = np.array([merge(back, m, g) for g, m in zip(mask(noise_gray), noise_img)])
     return list((mapfunc(lambda x: cv2.resize(x, (size, size)))(noise(np.array(fake))) / 255.).astype(np.float32))
 
+# #%%
+# h1, h2, im = sess.run([hsv1, hsv2, img], feed_dict={inp: proc(imgs, [58,]), noisy: True}); h1, h2, im = h1[0], h2[0], im[0]
+# h2.min(), h2.max(), h2.mean()
+# pylab.imshow(np.squeeze(h2))
+# pylab.imshow(np.concatenate([h1, h2], axis=-1))
 
 #%% model
 tf.reset_default_graph()
@@ -215,14 +221,30 @@ with tf.name_scope("input"):
     inp = tf.placeholder(tf.float32, [None, size, size, 3], "input")
     noisy = tf.constant(False)
     noisy_img = inp
-    # noisy_img = tf.image.resize_nearest_neighbor(noisy_img, (70, 70))
-    # noisy_img = tf.map_fn(lambda x: tf.random_crop(x, (50, 50, 3)), noisy_img)
     noisy_img = tf.map_fn(lambda x: tf.image.random_hue(x, 0.1), noisy_img)
     noisy_img = tf.map_fn(lambda x: tf.image.random_brightness(x, 0.1), noisy_img)
     noisy_img = tf.map_fn(lambda x: tf.image.random_contrast(x, 0.9, 1.1), noisy_img)
     noisy_img = tf.map_fn(lambda x: tf.image.random_saturation(x, 0.7, 1.3), noisy_img)
     noisy_img = noisy_img + tf.random_normal(tf.shape(inp), stddev=0.01)
     img = tf.cond(noisy, lambda :noisy_img, lambda :inp)
+
+    minv = tf.reduce_min(img, axis=[-1, -2, -3])
+    for i in range(3):
+        minv = tf.expand_dims(minv, 1)
+    img -= minv
+    maxv = tf.reduce_max(img, axis=[-1, -2, -3])
+    for i in range(3):
+        maxv = tf.expand_dims(maxv, 1)
+    img /= maxv + 1e-10
+
+    # hsv = tf.concat([img, tf.image.rgb_to_hsv(img)], axis=-1)
+    hsv = tf.image.rgb_to_hsv(img)
+    t = hsv[..., 0] * pi180
+    hsv1 = tf.stack([tf.sin(t), tf.cos(t)], axis=-1)
+    hsv1 *= tf.expand_dims(hsv[..., 1], -1)
+    hsv2 = tf.expand_dims(hsv[..., 2], -1)
+    # hsv = tf.concat([hsv_yx, hsv[..., 1:]], axis=-1)
+
     label = tf.placeholder(tf.float32, [None, len(labels)], "label")
 
 residual_cnt = 0
@@ -252,16 +274,16 @@ def residual(x, ch, activation_fn=tf.nn.relu, use_se=False):
 
 
 rdep_cnt = 0
-def rdep(layer, kernel_size, depth_multiplier, scale=0.2, dropout=None):
+def rdep(layer, kernel_size, depth_multiplier, scale=0.2, dropout=None, activation_fn=tf.nn.relu):
     global rdep_cnt
     with tf.variable_scope("rdep_{}".format(rdep_cnt)):
-        dep = tf.keras.layers.DepthwiseConv2D([1, kernel_size], depth_multiplier=depth_multiplier, padding="same", use_bias=False)(layer)
-        dep = tf.contrib.slim.batch_norm(dep, renorm=True)
-        dep = tf.nn.relu(dep)
-        dep = tf.keras.layers.DepthwiseConv2D([kernel_size, 1], depth_multiplier=1, padding="same", use_bias=False)(dep)
-        dep = tf.contrib.slim.batch_norm(dep, renorm=True)
-        # dep = tf.nn.relu(dep)
-        # dep = tf.keras.layers.PReLU()(dep)
+        dep = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=depth_multiplier, padding="same", use_bias=False)(layer)
+
+        # dep = tf.keras.layers.DepthwiseConv2D([1, kernel_size], depth_multiplier=depth_multiplier, padding="same", use_bias=False)(layer)
+        # dep = tf.contrib.slim.batch_norm(dep, renorm=True)
+        # dep = activation_fn(dep)
+        # dep = tf.keras.layers.DepthwiseConv2D([kernel_size, 1], depth_multiplier=1, padding="same", use_bias=False)(dep)
+        # dep = tf.contrib.slim.batch_norm(dep, renorm=True)
 
         dep = tf.reshape(dep, (-1, *layer.shape[1:], depth_multiplier))
         dep = tf.transpose(dep, (0, 4, 1, 2, 3)) * scale + tf.expand_dims(layer, 1)
@@ -269,13 +291,13 @@ def rdep(layer, kernel_size, depth_multiplier, scale=0.2, dropout=None):
         dep = tf.reshape(dep, (-1, *layer.shape[1:-1], layer.shape[-1] * depth_multiplier))
         if dropout is not None:
             dep = tf.cond(noisy, lambda: dropout(dep), lambda: dep)
-        dep = tf.nn.relu(dep)
+        dep = activation_fn(dep)
     rdep_cnt += 1
     return dep
 
 
 rpool_cnt = 0
-def rpool(layer, kernel_size, depth_multiplier, stride=2, scale=0.2, padding="same", dropout=None):
+def rpool(layer, kernel_size, depth_multiplier, stride=2, scale=0.2, padding="same", dropout=None, activation_fn=tf.nn.relu):
     global rpool_cnt
     with tf.variable_scope("rpool_{}".format(rpool_cnt)):
         pool = tf.contrib.slim.max_pool2d(layer, [1, kernel_size], stride=[1, stride], padding=padding)
@@ -296,19 +318,34 @@ def rpool(layer, kernel_size, depth_multiplier, stride=2, scale=0.2, padding="sa
         dep = tf.reshape(dep, (-1, *pool.shape[1:-1], pool.shape[-1] * depth_multiplier))
         if dropout is not None:
             dep = tf.cond(noisy, lambda: dropout(dep), lambda: dep)
-        dep = tf.nn.relu(dep)
+        dep = activation_fn(dep)
     rpool_cnt += 1
     return dep
 
 
 pw_cnt = 0
-def pointwise(layer, out_ch):
+def pointwise(layer, out_ch, **kwargs):
     global pw_cnt
     with tf.variable_scope("pointwise_{}".format(pw_cnt)):
-        layer = tf.contrib.slim.conv2d(layer, out_ch, 1, padding="same")
+        layer = tf.contrib.slim.conv2d(layer, out_ch, 1, padding="same", **kwargs)
     pw_cnt += 1
     return layer
 
+sel_cnt = 0
+def selection(*activations):
+    def activation(x):
+        global sel_cnt
+        with tf.variable_scope("selection_{}".format(sel_cnt)):
+            route = [act(x) for act in activations]
+            x = tf.stack(route, axis=-1)
+            alpha = tf.Variable(tf.ones((x.shape[-2], x.shape[-1],)))
+            alpha = tf.nn.softmax(alpha, axis=-1)
+            x = tf.reduce_sum(x * alpha, axis=-1)
+        sel_cnt += 1
+        return x
+    return activation
+
+act = selection(tf.nn.relu, tf.nn.sigmoid, tf.nn.tanh)
 with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.slim.conv2d],
     # activation_fn=functools.partial(tf.nn.leaky_relu, alpha=0.01),
     # activation_fn=lambda x: tf.keras.layers.PReLU()(x),
@@ -316,26 +353,42 @@ with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.sli
     # activation_fn=lambda x: tf.keras.layers.PReLU()(x),
     # activation_fn=tf.nn.leaky_relu,
     ):
-    x = img
+    x = hsv1
 
-    x1 = rdep(x, 3, 2, scale=1.)
-    x2 = rdep(x, 4, 2, scale=1.)
-    x3 = rdep(x, 5, 2, scale=1.)
+    x1 = rdep(x, 3, 5, scale=1., activation_fn=act)
+    x2 = rdep(x, 4, 5, scale=1., activation_fn=act)
+    x3 = rdep(x, 5, 5, scale=1., activation_fn=act)
     x = tf.concat([x1, x2, x3], axis=-1)
+
+    x = rdep(x, 3, 1, activation_fn=act)
+    x = rdep(x, 3, 1, activation_fn=act)
+    route1 = x
     x.shape
-    x = rpool(x, 3, 2)
+
+    x = hsv2
+    x1 = rdep(x, 3, 5, scale=1.)
+    x2 = rdep(x, 4, 5, scale=1.)
+    x3 = rdep(x, 5, 5, scale=1.)
+    x = tf.concat([x1, x2, x3], axis=-1)
+    route2 = x
+
+    x = route1
+
+    # x = tf.concat([route1, route2], axis=-1)
+
+    x = rpool(x, 3, 4, activation_fn=act)
     x.shape
-    x = rpool(x, 3, 2, padding="valid")
+    x = rpool(x, 3, 4, padding="valid", activation_fn=act)
     x.shape
-    x = pointwise(x, 256)
+    x = pointwise(x, 256, activation_fn=act)
     x.shape
 
     with tf.variable_scope("block"):
         for i in range(5):
-            x = residual(x, 256, use_se=True)
+            x = residual(x, 256, use_se=True, activation_fn=act)
 
     # x = pointwise(x, 512)
-    x = rpool(x, 3, 4)
+    x = rpool(x, 3, 4, activation_fn=act)
     x.shape
 
     with tf.variable_scope("pred"):
@@ -362,7 +415,8 @@ with tf.name_scope("summary"):
     result_log = tf.summary.merge([acc_log, loss_log, decoder_log])
     input_log = tf.summary.image("img", img, 10)
 
-logdir="./pkcp_logs_small/t105_rdep_rpool_se_sep_inception/"
+# logdir="./pkcp_logs_small/t105_rdep_rpool_se_sep_inception_minmax/"
+logdir="./pkcp_logs_small/t105_rdep_rpool_se_sep_inception_hsvYXS_ALLselection/"
 #%%
 step = 0
 sess = tf.Session()
@@ -397,7 +451,7 @@ true_label = onehot[test_label,]
 batch_n = 128
 batch_n = len(labels)
 with tf.device("/device:GPU:0"):
-    for epoch in (range(5000)):
+    for epoch in (range(10000)):
         random.shuffle(img_indices)
 
         losses = []
