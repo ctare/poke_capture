@@ -227,6 +227,7 @@ with tf.name_scope("input"):
     noisy_img = tf.map_fn(lambda x: tf.image.random_saturation(x, 0.7, 1.3), noisy_img)
     noisy_img = noisy_img + tf.random_normal(tf.shape(inp), stddev=0.01)
     img = tf.cond(noisy, lambda :noisy_img, lambda :inp)
+    rgb = img
 
     minv = tf.reduce_min(img, axis=[-1, -2, -3])
     for i in range(3):
@@ -242,7 +243,6 @@ with tf.name_scope("input"):
     t = hsv[..., 0] * pi180
     hs = tf.stack([tf.sin(t), tf.cos(t)], axis=-1)
     hs *= tf.expand_dims(hsv[..., 1], -1)
-    rgb = img
     # hsv = tf.concat([hsv_yx, hsv[..., 1:]], axis=-1)
 
     label = tf.placeholder(tf.float32, [None, len(labels)], "label")
@@ -274,21 +274,23 @@ def residual(x, ch, activation_fn=tf.nn.relu, use_se=False):
 
 
 rdep_cnt = 0
-def rdep(layer, kernel_size, depth_multiplier, scale=0.2, dropout=None, activation_fn=tf.nn.relu, loop=0):
+def rdep(layer, kernel_size, depth_multiplier, scale=0.2, dropout=None, activation_fn=tf.nn.relu, loop=0, bn=True):
     global rdep_cnt
     with tf.variable_scope("rdep_{}".format(rdep_cnt)):
-        dep = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=depth_multiplier, padding="same", use_bias=False)(layer)
+        dep = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=depth_multiplier, padding="same", use_bias=not bn)(layer)
         for i in range(loop):
             with tf.variable_scope("loop_{}".format(i)):
-                dep = tf.contrib.slim.batch_norm(dep, renorm=True)
+                if bn:
+                    dep = tf.contrib.slim.batch_norm(dep, renorm=True)
                 dep = activation_fn(dep)
-                dep = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=1, padding="same", use_bias=False)(dep)
+                dep = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=1, padding="same", use_bias=not bn)(dep)
 
         # dep = tf.keras.layers.DepthwiseConv2D([1, kernel_size], depth_multiplier=depth_multiplier, padding="same", use_bias=False)(layer)
         # dep = tf.contrib.slim.batch_norm(dep, renorm=True)
         # dep = activation_fn(dep)
         # dep = tf.keras.layers.DepthwiseConv2D([kernel_size, 1], depth_multiplier=1, padding="same", use_bias=False)(dep)
-        dep = tf.contrib.slim.batch_norm(dep, renorm=True)
+        if bn:
+            dep = tf.contrib.slim.batch_norm(dep, renorm=True)
 
         if depth_multiplier == 1:
             dep = dep * scale + layer
@@ -306,28 +308,30 @@ def rdep(layer, kernel_size, depth_multiplier, scale=0.2, dropout=None, activati
 
 
 rpool_cnt = 0
-def rpool(layer, kernel_size, depth_multiplier, stride=2, scale=0.2, padding="same", dropout=None, activation_fn=tf.nn.relu, loop=0):
+def rpool(layer, kernel_size, depth_multiplier, stride=2, scale=0.2, padding="same", dropout=None, activation_fn=tf.nn.relu, loop=0, bn=True):
     global rpool_cnt
     with tf.variable_scope("rpool_{}".format(rpool_cnt)):
         pool = tf.contrib.slim.max_pool2d(layer, kernel_size, stride=stride, padding=padding)
         # pool = tf.contrib.slim.max_pool2d(pool, [kernel_size, 1], stride=[stride, 1], padding=padding)
 
         first, second = (depth_multiplier + 1) // 2, depth_multiplier // 2
-        dep1 = tf.keras.layers.DepthwiseConv2D(kernel_size, strides=stride, depth_multiplier=first, padding=padding, use_bias=False)(layer)
+        dep1 = tf.keras.layers.DepthwiseConv2D(kernel_size, strides=stride, depth_multiplier=first, padding=padding, use_bias=not bn)(layer)
         dep1 = tf.reshape(dep1, (-1, *pool.shape[1:], first))
 
-        dep2 = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=second, padding="same", use_bias=False)(pool)
+        dep2 = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=second, padding="same", use_bias=not bn)(pool)
         dep2 = tf.reshape(dep2, (-1, *pool.shape[1:], second))
 
         dep = tf.concat([dep1, dep2], axis=-1)
 
         for i in range(loop):
             with tf.variable_scope("loop_{}".format(i)):
-                dep = tf.contrib.slim.batch_norm(dep, renorm=True)
+                if bn:
+                    dep = tf.contrib.slim.batch_norm(dep, renorm=True)
                 dep = activation_fn(dep)
-                dep = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=1, padding="same", use_bias=False)(layer)
+                dep = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=1, padding="same", use_bias=not bn)(layer)
 
-        dep = tf.contrib.slim.batch_norm(dep, renorm=True)
+        if bn:
+            dep = tf.contrib.slim.batch_norm(dep, renorm=True)
 
         dep = tf.transpose(dep, (0, 4, 1, 2, 3)) * scale + tf.expand_dims(pool, 1)
         dep = tf.transpose(dep, (0, 2, 3, 1, 4))
@@ -356,83 +360,125 @@ with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.sli
     ):
     with tf.variable_scope("rgb"):
         x = rgb
-        x = rdep(x, 3, 8, scale=1., activation_fn=act)
+        x = rdep(x, 3, 10, scale=1., activation_fn=act)
         x1 = x
         x.shape
         x = rpool(x, 3, 8, activation_fn=act)
         x2 = x
         x.shape
-        x = rpool(x, 3, 4, padding="valid", activation_fn=act)
+        x = rpool(x, 3, 2, padding="valid", activation_fn=act)
         x3 = x
         x.shape
         x = pointwise(x, 256, activation_fn=act)
         x4 = x
         x.shape
-
-        with tf.variable_scope("block"):
-            for i in range(4):
-                x = residual(x, 256, use_se=True, activation_fn=act)
         route1 = x
 
-    with tf.variable_scope("hs"):
-        x = hs
-        x = rdep(x, 3, 8, scale=1., activation_fn=act)
-        x1 = x
-        x.shape
-        x = rpool(x, 3, 8, activation_fn=act)
-        x2 = x
-        x.shape
-        x = rpool(x, 3, 6, padding="valid", activation_fn=act)
-        x3 = x
-        x.shape
-        x = pointwise(x, 256, activation_fn=act)
-        x4 = x
-        x.shape
-
-        x = pointwise(x, 256, activation_fn=act)
         with tf.variable_scope("block"):
-            for i in range(4):
+            for i in range(6):
                 x = residual(x, 256, use_se=True, activation_fn=act)
 
-        route2 = x
+        # x = pointwise(x, 512)
+        x = rpool(x, 3, 4, activation_fn=act)
+        route1_2 = x
+        x.shape
 
-    x = tf.concat([route1, route2], axis=-1)
+        with tf.variable_scope("pred"):
+            # x = rdep(x, 3, 2)
+            # x = tf.contrib.slim.conv2d(x, 1024, 1)
+            x = tf.contrib.slim.avg_pool2d(x, x.shape[1:3])
+            fc = tf.contrib.slim.flatten(x)
+            pred_rgb = tf.contrib.slim.fully_connected(fc, len(labels), activation_fn=tf.nn.softmax)
 
-    x = pointwise(x, 256, activation_fn=act)
-    with tf.variable_scope("block"):
-        for i in range(4):
-            x = residual(x, 256, use_se=True, activation_fn=act)
+    # with tf.variable_scope("hs"):
+    #     x = hs
+    #     x = rdep(x, 3, 8, scale=1., activation_fn=act)
+    #     x1 = x
+    #     x.shape
+    #     x = rpool(x, 3, 8, activation_fn=act)
+    #     x2 = x
+    #     x.shape
+    #     x = rpool(x, 3, 6, padding="valid", activation_fn=act)
+    #     x3 = x
+    #     x.shape
+    #     x = pointwise(x, 256, activation_fn=act)
+    #     x4 = x
+    #     x.shape
+    #     route2 = x
+    #
+    #     with tf.variable_scope("block"):
+    #         for i in range(6):
+    #             x = residual(x, 256, use_se=True, activation_fn=act)
+    #
+    #     # x = pointwise(x, 512)
+    #     x = rpool(x, 3, 4, activation_fn=act)
+    #     route2_2 = x
+    #     x.shape
+    #
+    #     with tf.variable_scope("pred"):
+    #         # x = rdep(x, 3, 2)
+    #         # x = tf.contrib.slim.conv2d(x, 1024, 1)
+    #         x = tf.contrib.slim.avg_pool2d(x, x.shape[1:3])
+    #         fc = tf.contrib.slim.flatten(x)
+    #         pred_hs = tf.contrib.slim.fully_connected(fc, len(labels), activation_fn=tf.nn.softmax)
+    #
+    # with tf.variable_scope("mix"):
+    #
+    #     x = route1 + route2 # tf.concat([route1, route2], axis=-1) and pointwise
+    #     with tf.variable_scope("block"):
+    #         for i in range(4):
+    #             x = residual(x, 256, use_se=True, activation_fn=act)
+    #
+    #
+    #     # x = pointwise(x, 512)
+    #     x = rpool(x, 3, 4, activation_fn=act)
+    #
+    #     x = tf.concat([route1_2, route2_2, x], axis=-1)
+    #     x = pointwise(x, 1024)
+    #     x.shape
+    #
+    #     with tf.variable_scope("pred"):
+    #         # x = rdep(x, 3, 2)
+    #         # x = tf.contrib.slim.conv2d(x, 1024, 1)
+    #         x = tf.contrib.slim.avg_pool2d(x, x.shape[1:3])
+    #         fc = tf.contrib.slim.flatten(x)
+    #         pred_mix = tf.contrib.slim.fully_connected(fc, len(labels), activation_fn=tf.nn.softmax)
 
-    # x = pointwise(x, 512)
-    x = rpool(x, 3, 4, activation_fn=act)
-    x.shape
-
-    with tf.variable_scope("pred"):
-        # x = rdep(x, 3, 2)
-        # x = tf.contrib.slim.conv2d(x, 1024, 1)
-        x = tf.contrib.slim.avg_pool2d(x, x.shape[1:3])
-        fc = tf.contrib.slim.flatten(x)
-        pred = tf.contrib.slim.fully_connected(fc, len(labels), activation_fn=tf.nn.softmax)
-
+rgb_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="rgb")
+# hs_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="hs")
+# mix_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="mix")
 with tf.name_scope("optimize"):
-    loss = -tf.reduce_sum(label * tf.log(pred + 1e-10), axis=1)
-    loss = tf.reduce_mean(loss)
-    optimizer = tf.train.AdamOptimizer().minimize(loss)
+    loss = -tf.reduce_sum(label * tf.log(pred_rgb + 1e-10), axis=1)
+    loss_rgb = tf.reduce_mean(loss)
+    optimizer_rgb = tf.train.AdamOptimizer().minimize(loss_rgb, var_list=rgb_vars)
+    #
+    # loss = -tf.reduce_sum(label * tf.log(pred_hs + 1e-10), axis=1)
+    # loss_hs = tf.reduce_mean(loss)
+    # optimizer_hs = tf.train.AdamOptimizer().minimize(loss_hs, var_list=hs_vars)
+    #
+    # loss = -tf.reduce_sum(label * tf.log(pred_mix + 1e-10), axis=1)
+    # loss_mix = tf.reduce_mean(loss)
+    # optimizer_mix = tf.train.AdamOptimizer().minimize(loss_mix, var_list=mix_vars)
 
-with tf.name_scope("summary"):
+
+def add_log(pred, loss, name):
     acc = tf.equal(tf.argmax(pred, axis=1), tf.argmax(label, axis=1))
     acc = tf.reduce_mean(tf.cast(acc, tf.float32))
-    acc_log = tf.summary.scalar("acc", acc)
+    return tf.summary.scalar("acc_{}".format(name), acc), tf.summary.scalar("loss_{}".format(name), loss)
+
+with tf.name_scope("summary"):
+    acc_log_rgb, loss_log_rgb = add_log(pred_rgb, loss_rgb, "rgb")
+    # acc_log_hs, loss_log_hs = add_log(pred_hs, loss_hs, "hs")
+    # acc_log_mix, loss_log_mix = add_log(pred_mix, loss_mix, "mix")
 
     log_img = tf.placeholder(tf.uint8, [len(labels), 32, 32, 3])
-    loss_log = tf.summary.scalar("loss", loss)
-
-    decoder_log = tf.summary.image("img", tf.cast(tf.map_fn(lambda x: tf.cast(log_img[x], tf.int64), tf.argmax(pred, 1)), tf.uint8), 10)
-    result_log = tf.summary.merge([acc_log, loss_log, decoder_log])
+    # decoder_log = tf.summary.image("img", tf.cast(tf.map_fn(lambda x: tf.cast(log_img[x], tf.int64), tf.argmax(pred_mix, 1)), tf.uint8), 10)
+    decoder_log = tf.summary.image("img", tf.cast(tf.map_fn(lambda x: tf.cast(log_img[x], tf.int64), tf.argmax(pred_rgb, 1)), tf.uint8), 10)
+    result_log = tf.summary.merge_all()
     input_log = tf.summary.image("img", img, 10)
 
 # logdir="./pkcp_logs_small/t105_rdep_rpool_se_sep_inception_minmax/"
-logdir="./pkcp_logs_small/t105_rdeploop_mini_max_rgbhs_2way/"
+logdir="./pkcp_logs_small_3way/t105_rgb2/"
 #%%
 step = 0
 sess = tf.Session()
@@ -479,7 +525,8 @@ with tf.device("/device:GPU:0"):
             # positioned_data = label_data[true_label_indices,]
             # positioned_data = onehot[true_label_indices,]
 
-            sess.run([optimizer], feed_dict={inp: data, label: onehot[target,], noisy: True})
+            # sess.run([optimizer_rgb, optimizer_hs, optimizer_mix], feed_dict={inp: data, label: onehot[target,], noisy: True})
+            sess.run([optimizer_rgb], feed_dict={inp: data, label: onehot[target,], noisy: True})
         # _, lossv = sess.run([optimizer, x6], feed_dict={inp: data, label: onehot[target,], noisy: True}); lossv
 
         # lossv, p, l = sess.run([loss, pred, label], feed_dict={pred: onehot[target,], label: onehot[target,], noisy: True})
