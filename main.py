@@ -350,7 +350,19 @@ def pointwise(layer, out_ch, **kwargs):
     pw_cnt += 1
     return layer
 
-act = tf.nn.relu
+selection_cnt = 0
+def selection(*activations):
+    def activation(x):
+        with tf.variable_scope("selection_{}".format(selection_cnt)):
+            route = [act(x) for act in activations]
+            x = tf.stack(route, axis=-1)
+            alpha = tf.Variable(tf.ones((x.shape[-2], x.shape[-1],)))
+            alpha = tf.nn.softmax(alpha, axis=-1)
+            x = tf.reduce_sum(x * alpha, axis=-1)
+        return x
+    return activation
+
+
 with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.slim.conv2d],
     # activation_fn=functools.partial(tf.nn.leaky_relu, alpha=0.01),
     # activation_fn=lambda x: tf.keras.layers.PReLU()(x),
@@ -359,11 +371,14 @@ with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.sli
     # activation_fn=tf.nn.leaky_relu,
     ):
     with tf.variable_scope("rgb"):
+        act = tf.nn.relu
         x = rgb
-        x = rdep(x, 3, 10, scale=1., activation_fn=act)
+        b1 = rdep(x, 3, 15, scale=1., activation_fn=act)
+        b2 = rdep(x, 5, 15, scale=1., activation_fn=act)
+        x = tf.concat([b1, b2], axis=-1)
         x1 = x
         x.shape
-        x = rpool(x, 3, 8, activation_fn=act)
+        x = rpool(x, 3, 4, activation_fn=act)
         x2 = x
         x.shape
         x = rpool(x, 3, 2, padding="valid", activation_fn=act)
@@ -390,75 +405,76 @@ with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.sli
             fc = tf.contrib.slim.flatten(x)
             pred_rgb = tf.contrib.slim.fully_connected(fc, len(labels), activation_fn=tf.nn.softmax)
 
-    # with tf.variable_scope("hs"):
-    #     x = hs
-    #     x = rdep(x, 3, 8, scale=1., activation_fn=act)
-    #     x1 = x
-    #     x.shape
-    #     x = rpool(x, 3, 8, activation_fn=act)
-    #     x2 = x
-    #     x.shape
-    #     x = rpool(x, 3, 6, padding="valid", activation_fn=act)
-    #     x3 = x
-    #     x.shape
-    #     x = pointwise(x, 256, activation_fn=act)
-    #     x4 = x
-    #     x.shape
-    #     route2 = x
-    #
-    #     with tf.variable_scope("block"):
-    #         for i in range(6):
-    #             x = residual(x, 256, use_se=True, activation_fn=act)
-    #
-    #     # x = pointwise(x, 512)
-    #     x = rpool(x, 3, 4, activation_fn=act)
-    #     route2_2 = x
-    #     x.shape
-    #
-    #     with tf.variable_scope("pred"):
-    #         # x = rdep(x, 3, 2)
-    #         # x = tf.contrib.slim.conv2d(x, 1024, 1)
-    #         x = tf.contrib.slim.avg_pool2d(x, x.shape[1:3])
-    #         fc = tf.contrib.slim.flatten(x)
-    #         pred_hs = tf.contrib.slim.fully_connected(fc, len(labels), activation_fn=tf.nn.softmax)
-    #
-    # with tf.variable_scope("mix"):
-    #
-    #     x = route1 + route2 # tf.concat([route1, route2], axis=-1) and pointwise
-    #     with tf.variable_scope("block"):
-    #         for i in range(4):
-    #             x = residual(x, 256, use_se=True, activation_fn=act)
-    #
-    #
-    #     # x = pointwise(x, 512)
-    #     x = rpool(x, 3, 4, activation_fn=act)
-    #
-    #     x = tf.concat([route1_2, route2_2, x], axis=-1)
-    #     x = pointwise(x, 1024)
-    #     x.shape
-    #
-    #     with tf.variable_scope("pred"):
-    #         # x = rdep(x, 3, 2)
-    #         # x = tf.contrib.slim.conv2d(x, 1024, 1)
-    #         x = tf.contrib.slim.avg_pool2d(x, x.shape[1:3])
-    #         fc = tf.contrib.slim.flatten(x)
-    #         pred_mix = tf.contrib.slim.fully_connected(fc, len(labels), activation_fn=tf.nn.softmax)
+    with tf.variable_scope("hs"):
+        act = selection(tf.nn.relu, tf.nn.tanh, tf.nn.sigmoid)
+        x = hs
+        x = rdep(x, 3, 8, scale=1., activation_fn=act)
+        x1 = x
+        x.shape
+        x = rpool(x, 3, 8, activation_fn=act)
+        x2 = x
+        x.shape
+        x = rpool(x, 3, 6, padding="valid", activation_fn=act)
+        x3 = x
+        x.shape
+        x = pointwise(x, 256, activation_fn=act)
+        x4 = x
+        x.shape
+        route2 = x
+
+        with tf.variable_scope("block"):
+            for i in range(6):
+                x = residual(x, 256, use_se=True, activation_fn=act)
+
+        # x = pointwise(x, 512)
+        x = rpool(x, 3, 4, activation_fn=act)
+        route2_2 = x
+        x.shape
+
+        with tf.variable_scope("pred"):
+            # x = rdep(x, 3, 2)
+            # x = tf.contrib.slim.conv2d(x, 1024, 1)
+            x = tf.contrib.slim.avg_pool2d(x, x.shape[1:3])
+            fc = tf.contrib.slim.flatten(x)
+            pred_hs = tf.contrib.slim.fully_connected(fc, len(labels), activation_fn=tf.nn.softmax)
+
+    with tf.variable_scope("mix"):
+        act = tf.nn.relu
+        x = route1 + route2 # tf.concat([route1, route2], axis=-1) and pointwise
+        with tf.variable_scope("block"):
+            for i in range(4):
+                x = residual(x, 256, use_se=True, activation_fn=act)
+
+
+        # x = pointwise(x, 512)
+        x = rpool(x, 3, 4, activation_fn=act)
+
+        x = tf.concat([route1_2, route2_2, x], axis=-1)
+        x = pointwise(x, 1024)
+        x.shape
+
+        with tf.variable_scope("pred"):
+            # x = rdep(x, 3, 2)
+            # x = tf.contrib.slim.conv2d(x, 1024, 1)
+            x = tf.contrib.slim.avg_pool2d(x, x.shape[1:3])
+            fc = tf.contrib.slim.flatten(x)
+            pred_mix = tf.contrib.slim.fully_connected(fc, len(labels), activation_fn=tf.nn.softmax)
 
 rgb_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="rgb")
-# hs_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="hs")
-# mix_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="mix")
+hs_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="hs")
+mix_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="mix")
 with tf.name_scope("optimize"):
     loss = -tf.reduce_sum(label * tf.log(pred_rgb + 1e-10), axis=1)
     loss_rgb = tf.reduce_mean(loss)
     optimizer_rgb = tf.train.AdamOptimizer().minimize(loss_rgb, var_list=rgb_vars)
-    #
-    # loss = -tf.reduce_sum(label * tf.log(pred_hs + 1e-10), axis=1)
-    # loss_hs = tf.reduce_mean(loss)
-    # optimizer_hs = tf.train.AdamOptimizer().minimize(loss_hs, var_list=hs_vars)
-    #
-    # loss = -tf.reduce_sum(label * tf.log(pred_mix + 1e-10), axis=1)
-    # loss_mix = tf.reduce_mean(loss)
-    # optimizer_mix = tf.train.AdamOptimizer().minimize(loss_mix, var_list=mix_vars)
+
+    loss = -tf.reduce_sum(label * tf.log(pred_hs + 1e-10), axis=1)
+    loss_hs = tf.reduce_mean(loss)
+    optimizer_hs = tf.train.AdamOptimizer().minimize(loss_hs, var_list=hs_vars)
+
+    loss = -tf.reduce_sum(label * tf.log(pred_mix + 1e-10), axis=1)
+    loss_mix = tf.reduce_mean(loss)
+    optimizer_mix = tf.train.AdamOptimizer().minimize(loss_mix, var_list=mix_vars)
 
 
 def add_log(pred, loss, name):
@@ -468,17 +484,17 @@ def add_log(pred, loss, name):
 
 with tf.name_scope("summary"):
     acc_log_rgb, loss_log_rgb = add_log(pred_rgb, loss_rgb, "rgb")
-    # acc_log_hs, loss_log_hs = add_log(pred_hs, loss_hs, "hs")
-    # acc_log_mix, loss_log_mix = add_log(pred_mix, loss_mix, "mix")
+    acc_log_hs, loss_log_hs = add_log(pred_hs, loss_hs, "hs")
+    acc_log_mix, loss_log_mix = add_log(pred_mix, loss_mix, "mix")
 
     log_img = tf.placeholder(tf.uint8, [len(labels), 32, 32, 3])
-    # decoder_log = tf.summary.image("img", tf.cast(tf.map_fn(lambda x: tf.cast(log_img[x], tf.int64), tf.argmax(pred_mix, 1)), tf.uint8), 10)
-    decoder_log = tf.summary.image("img", tf.cast(tf.map_fn(lambda x: tf.cast(log_img[x], tf.int64), tf.argmax(pred_rgb, 1)), tf.uint8), 10)
+    decoder_log = tf.summary.image("img", tf.cast(tf.map_fn(lambda x: tf.cast(log_img[x], tf.int64), tf.argmax(pred_mix, 1)), tf.uint8), 10)
+    # decoder_log = tf.summary.image("img", tf.cast(tf.map_fn(lambda x: tf.cast(log_img[x], tf.int64), tf.argmax(pred_rgb, 1)), tf.uint8), 10)
     result_log = tf.summary.merge_all()
     input_log = tf.summary.image("img", img, 10)
 
 # logdir="./pkcp_logs_small/t105_rdep_rpool_se_sep_inception_minmax/"
-logdir="./pkcp_logs_small_3way/t105_rgb2/"
+logdir="./pkcp_logs_small_3way/t105_goodmix/"
 #%%
 step = 0
 sess = tf.Session()
@@ -513,7 +529,7 @@ true_label = onehot[test_label,]
 batch_n = 128
 batch_n = len(labels)
 with tf.device("/device:GPU:0"):
-    for epoch in (range(5000)):
+    for epoch in (range(10000)):
         random.shuffle(img_indices)
 
         losses = []
@@ -525,8 +541,8 @@ with tf.device("/device:GPU:0"):
             # positioned_data = label_data[true_label_indices,]
             # positioned_data = onehot[true_label_indices,]
 
-            # sess.run([optimizer_rgb, optimizer_hs, optimizer_mix], feed_dict={inp: data, label: onehot[target,], noisy: True})
-            sess.run([optimizer_rgb], feed_dict={inp: data, label: onehot[target,], noisy: True})
+            sess.run([optimizer_rgb, optimizer_hs, optimizer_mix], feed_dict={inp: data, label: onehot[target,], noisy: True})
+            # sess.run([optimizer_rgb], feed_dict={inp: data, label: onehot[target,], noisy: True})
         # _, lossv = sess.run([optimizer, x6], feed_dict={inp: data, label: onehot[target,], noisy: True}); lossv
 
         # lossv, p, l = sess.run([loss, pred, label], feed_dict={pred: onehot[target,], label: onehot[target,], noisy: True})
