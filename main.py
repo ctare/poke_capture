@@ -314,23 +314,29 @@ def rpool(layer, kernel_size, depth_multiplier, stride=2, scale=0.2, padding="sa
     global rpool_cnt
     with tf.variable_scope("rpool_{}".format(rpool_cnt)):
         pool = tf.contrib.slim.max_pool2d(layer, kernel_size, stride=stride, padding=padding)
-        # pool = tf.contrib.slim.max_pool2d(pool, [kernel_size, 1], stride=[stride, 1], padding=padding)
-
         first, second = (depth_multiplier + 1) // 2, depth_multiplier // 2
-        dep1 = tf.keras.layers.DepthwiseConv2D(kernel_size, strides=stride, depth_multiplier=first, padding=padding, use_bias=not bn)(layer)
-        dep1 = tf.reshape(dep1, (-1, *pool.shape[1:], first))
 
-        dep2 = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=second, padding="same", use_bias=not bn)(pool)
-        dep2 = tf.reshape(dep2, (-1, *pool.shape[1:], second))
-
-        dep = tf.concat([dep1, dep2], axis=-1)
-
+        dep = tf.keras.layers.DepthwiseConv2D(kernel_size, strides=stride, depth_multiplier=first, padding=padding, use_bias=not bn)(layer)
         for i in range(loop):
-            with tf.variable_scope("loop_{}".format(i)):
+            with tf.variable_scope("loop_1_{}".format(i)):
                 if bn:
                     dep = tf.contrib.slim.batch_norm(dep, renorm=True)
                 dep = activation_fn(dep)
-                dep = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=1, padding="same", use_bias=not bn)(layer)
+                dep = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=1, padding="same", use_bias=not bn)(dep)
+        dep = tf.reshape(dep, (-1, *pool.shape[1:], first))
+        dep1 = dep
+
+        dep = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=second, padding="same", use_bias=not bn)(pool)
+        for i in range(loop):
+            with tf.variable_scope("loop_2_{}".format(i)):
+                if bn:
+                    dep = tf.contrib.slim.batch_norm(dep, renorm=True)
+                dep = activation_fn(dep)
+                dep = tf.keras.layers.DepthwiseConv2D(kernel_size, depth_multiplier=1, padding="same", use_bias=not bn)(dep)
+        dep = tf.reshape(dep, (-1, *pool.shape[1:], second))
+        dep2 = dep
+
+        dep = tf.concat([dep1, dep2], axis=-1)
 
         if bn:
             dep = tf.contrib.slim.batch_norm(dep, renorm=True)
@@ -412,8 +418,9 @@ with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.sli
         act = tf.nn.relu
         x = hs
         x = rdep(x, 3, 8, scale=1., activation_fn=act)
-        x1 = x
-        x.shape
+        # x1 = x
+        # x.shape
+        # x = rpool(x, 3, 16, activation_fn=act, loop=2)
         x = rpool(x, 3, 8, activation_fn=act)
         x2 = x
         x.shape
@@ -483,12 +490,12 @@ with tf.name_scope("optimize"):
 def add_log(pred, loss, name):
     acc = tf.equal(tf.argmax(pred, axis=1), tf.argmax(label, axis=1))
     acc = tf.reduce_mean(tf.cast(acc, tf.float32))
-    return tf.summary.scalar("acc_{}".format(name), acc), tf.summary.scalar("loss_{}".format(name), loss)
+    return tf.summary.scalar("acc_{}".format(name), acc), tf.summary.scalar("loss_{}".format(name), loss), acc
 
 with tf.name_scope("summary"):
-    acc_log_rgb, loss_log_rgb = add_log(pred_rgb, loss_rgb, "rgb")
-    acc_log_hs, loss_log_hs = add_log(pred_hs, loss_hs, "hs")
-    acc_log_mix, loss_log_mix = add_log(pred_mix, loss_mix, "mix")
+    acc_log_rgb, loss_log_rgb, acc_rgb = add_log(pred_rgb, loss_rgb, "rgb")
+    acc_log_hs, loss_log_hs, acc_hs = add_log(pred_hs, loss_hs, "hs")
+    acc_log_mix, loss_log_mix, acc_mix = add_log(pred_mix, loss_mix, "mix")
 
     log_img = tf.placeholder(tf.uint8, [len(labels), 32, 32, 3])
     decoder_log = tf.summary.image("img", tf.cast(tf.map_fn(lambda x: tf.cast(log_img[x], tf.int64), tf.argmax(pred_mix, 1)), tf.uint8), 10)
@@ -497,16 +504,13 @@ with tf.name_scope("summary"):
     input_log = tf.summary.image("img", img, 10)
 
 # logdir="./pkcp_logs_small/t105_rdep_rpool_se_sep_inception_minmax/"
-logdir="./pkcp_logs_small_3way/t105_goodmix_all_mix_mini/"
+# logdir="./pkcp_logs_small_3way/t105_goodmix_all_hsv_mini_mix/"
+logdir="./pkcp_logs_small_3way/t105_tmp/"
 
 #%%
 step = 0
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
-
-rgb_saver.restore(sess, "way3/base/rgb")
-hs_saver.restore(sess, "way3/base/hs")
-# mix_saver.restore(sess, "way3/base/mix")
 
 try:
     tf.gfile.DeleteRecursively(logdir)
@@ -537,7 +541,7 @@ true_label = onehot[test_label,]
 batch_n = 128
 # batch_n = len(labels)
 with tf.device("/device:GPU:0"):
-    for epoch in (range(10000)):
+    for epoch in (range(2000)):
         random.shuffle(img_indices)
 
         for target in zip(*[iter(img_indices)]* batch_n):
@@ -546,6 +550,7 @@ with tf.device("/device:GPU:0"):
             # sess.run([optimizer_rgb, optimizer_hs, optimizer_mix], feed_dict={inp: data, label: onehot[target,], noisy: True})
             sess.run([optimizer_mix], feed_dict={inp: data, label: onehot[target,], noisy: True})
             # sess.run([optimizer_rgb], feed_dict={inp: data, label: onehot[target,], noisy: True})
+            # sess.run([optimizer_hs], feed_dict={inp: data, label: onehot[target,], noisy: True})
 
         if epoch % 100 == 0:
             random.shuffle(img_indices)
@@ -556,7 +561,11 @@ with tf.device("/device:GPU:0"):
             train_input_summary.add_summary(result_input, step)
 
         t = test_data
-        result, result_input = sess.run([result_log, input_log], feed_dict={inp: t, label: true_label, log_img: imgs})
+        result, result_input, accuracy = sess.run([result_log, input_log, acc_mix], feed_dict={inp: t, label: true_label, log_img: imgs})
+        if step >= 1500 and accuracy == 1:
+            print("stop", step)
+            break
+
         test_summary.add_summary(result, step)
         test_input_summary.add_summary(result_input, step)
 
@@ -634,10 +643,10 @@ hs_saver = tf.train.Saver(var_list=hs_vars)
 mix_saver = tf.train.Saver(var_list=mix_vars)
 
 #%% save restore
-# rgb_saver.restore(sess, "way3/base/rgb")
-# hs_saver.restore(sess, "way3/base/hs")
-# mix_saver.restore(sess, "way3/base/mix")
+rgb_saver.restore(sess, "way3/base/rgb")
+hs_saver.restore(sess, "way3/base/hs")
+# mix_saver.restore(sess, "way3/base_mini/mix")
 
 # rgb_saver.save(sess, "way3/base/rgb")
-# hs_saver.save(sess, "way3/base/hs")
-# mix_saver.save(sess, "way3/base/mix")
+# hs_saver.save(sess, "way3/base_mini/hs")
+# mix_saver.save(sess, "way3/base_mini/mix")
