@@ -651,4 +651,4 @@ mix_saver.restore(sess, "way3/base/mix")
 
 #%% save all
 saver = tf.train.Saver()
-saver.save(sess, "way3/base/all")
+saver.save(sess, "way3/base/model")
