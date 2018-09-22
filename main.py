@@ -58,7 +58,7 @@ for filename in glob("pkcp_test_data/*"):
     ext_test_data = np.concatenate((ext_test_data, d))
     ext_test_label = np.concatenate((ext_test_label, l))
 test_data = np.concatenate([test_data, ext_test_data])
-test_label = np.concatenate([test_label, ext_test_label]).astype(np.int) + 1
+test_label = np.concatenate([test_label, ext_test_label]).astype(int)
 # labels = [
 #         233, 445, 797, 785, 130, 681,
 #         232, 444, 796, 784, 129, 680,
@@ -81,9 +81,11 @@ test_label = np.concatenate([test_label, ext_test_label]).astype(np.int) + 1
 #         # 184, 444, 443, 552, 144, 117,
 #         #mrl gbyt hkml wrbr frzr shdr
 #         ] + list(range(6, 114))
-# labels = list(range(1, 807 + 1))
-labels = np.array(list(set(np.concatenate((test_label, test_label - 1)))))
-test_label = (labels == np.array([test_label]).T).argmax(axis=1)
+labels = list(range(1, 807 + 1))
+
+# labels = np.array(list(set(np.concatenate((test_label, test_label - 1)))))
+# test_label = (labels == np.array([test_label]).T).argmax(axis=1)
+
 # pylab.imshow(test_data[0])
 # pylab.imshow(imgs[labels[test_label[0]]])
 
@@ -406,7 +408,8 @@ with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.sli
             pred_rgb = tf.contrib.slim.fully_connected(fc, len(labels), activation_fn=tf.nn.softmax)
 
     with tf.variable_scope("hs"):
-        act = selection(tf.nn.relu, tf.nn.tanh, tf.nn.sigmoid)
+        # act = selection(tf.nn.relu, tf.nn.tanh, tf.nn.sigmoid)
+        act = tf.nn.relu
         x = hs
         x = rdep(x, 3, 8, scale=1., activation_fn=act)
         x1 = x
@@ -442,7 +445,7 @@ with tf.contrib.slim.arg_scope([tf.contrib.slim.separable_conv2d, tf.contrib.sli
         act = tf.nn.relu
         x = route1 + route2 # tf.concat([route1, route2], axis=-1) and pointwise
         with tf.variable_scope("block"):
-            for i in range(4):
+            for i in range(2):
                 x = residual(x, 256, use_se=True, activation_fn=act)
 
 
@@ -494,11 +497,16 @@ with tf.name_scope("summary"):
     input_log = tf.summary.image("img", img, 10)
 
 # logdir="./pkcp_logs_small/t105_rdep_rpool_se_sep_inception_minmax/"
-logdir="./pkcp_logs_small_3way/t105_goodmix/"
+logdir="./pkcp_logs_small_3way/t105_goodmix_all_mix_mini/"
+
 #%%
 step = 0
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
+
+rgb_saver.restore(sess, "way3/base/rgb")
+hs_saver.restore(sess, "way3/base/hs")
+# mix_saver.restore(sess, "way3/base/mix")
 
 try:
     tf.gfile.DeleteRecursively(logdir)
@@ -527,30 +535,17 @@ summaries = [main_summary, train_summary, train_input_summary, test_summary, tes
 
 true_label = onehot[test_label,]
 batch_n = 128
-batch_n = len(labels)
+# batch_n = len(labels)
 with tf.device("/device:GPU:0"):
     for epoch in (range(10000)):
         random.shuffle(img_indices)
 
-        losses = []
         for target in zip(*[iter(img_indices)]* batch_n):
-            # target = img_indices
             data = proc(imgs, target)
 
-            # label_data = imgs[target,] / 255.
-            # positioned_data = label_data[true_label_indices,]
-            # positioned_data = onehot[true_label_indices,]
-
-            sess.run([optimizer_rgb, optimizer_hs, optimizer_mix], feed_dict={inp: data, label: onehot[target,], noisy: True})
+            # sess.run([optimizer_rgb, optimizer_hs, optimizer_mix], feed_dict={inp: data, label: onehot[target,], noisy: True})
+            sess.run([optimizer_mix], feed_dict={inp: data, label: onehot[target,], noisy: True})
             # sess.run([optimizer_rgb], feed_dict={inp: data, label: onehot[target,], noisy: True})
-        # _, lossv = sess.run([optimizer, x6], feed_dict={inp: data, label: onehot[target,], noisy: True}); lossv
-
-        # lossv, p, l = sess.run([loss, pred, label], feed_dict={pred: onehot[target,], label: onehot[target,], noisy: True})
-
-        # np.linalg.norm(p - l)
-
-        # pylab.imshow(data[0])
-        # pylab.imshow(imgs[np.argmax(onehot[target,], 1)[0]])
 
         if epoch % 100 == 0:
             random.shuffle(img_indices)
@@ -615,16 +610,34 @@ a -= a.min()
 a /= a.max()
 pylab.imshow(a[..., 8])
 
-#%%
-saver = tf.train.Saver()
-# saver.save(sess, "./pkcp_rdep_se/model")
-saver.restore(sess, "./pkcp_rdep_se/model")
+# #%%
+# saver = tf.train.Saver()
+# # saver.save(sess, "./pkcp_rdep_se/model")
+# saver.restore(sess, "./pkcp_rdep_se/model")
 
 
 #%%
-pred_label = sess.run(pred, feed_dict={inp: t, log_img: imgs}).argmax(axis=1)
+target = pred_mix
+pred_label = sess.run(target, feed_dict={inp: t, log_img: imgs}).argmax(axis=1)
 miss = np.where(pred_label != true_label.argmax(axis=1))
-
-pylab.imshow(pv(t[miss], 2, 1))
-pylab.imshow(pv(imgs[pred_label[miss]], 2, 1).astype(np.uint8))
+pylab.imshow(pv(t[miss], len(miss[0]), 1))
+pylab.show()
+pylab.imshow(pv(imgs[pred_label[miss]], len(miss[0]), 1).astype(np.uint8))
+pylab.show()
 print(miss) # (array([ 6, 52]),)
+pl = sess.run(target, feed_dict={inp: t, log_img: imgs})
+pl[miss].max(axis=-1)
+
+#%% saver
+rgb_saver = tf.train.Saver(var_list=rgb_vars)
+hs_saver = tf.train.Saver(var_list=hs_vars)
+mix_saver = tf.train.Saver(var_list=mix_vars)
+
+#%% save restore
+# rgb_saver.restore(sess, "way3/base/rgb")
+# hs_saver.restore(sess, "way3/base/hs")
+# mix_saver.restore(sess, "way3/base/mix")
+
+# rgb_saver.save(sess, "way3/base/rgb")
+# hs_saver.save(sess, "way3/base/hs")
+# mix_saver.save(sess, "way3/base/mix")
