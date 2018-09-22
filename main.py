@@ -274,7 +274,6 @@ def residual(x, ch, activation_fn=tf.nn.relu, use_se=False):
     residual_cnt += 1
     return x
 
-
 rdep_cnt = 0
 def rdep(layer, kernel_size, depth_multiplier, scale=0.2, dropout=None, activation_fn=tf.nn.relu, loop=0, bn=True):
     global rdep_cnt
@@ -307,7 +306,6 @@ def rdep(layer, kernel_size, depth_multiplier, scale=0.2, dropout=None, activati
         dep = activation_fn(dep)
     rdep_cnt += 1
     return dep
-
 
 rpool_cnt = 0
 def rpool(layer, kernel_size, depth_multiplier, stride=2, scale=0.2, padding="same", dropout=None, activation_fn=tf.nn.relu, loop=0, bn=True):
@@ -650,3 +648,7 @@ mix_saver.restore(sess, "way3/base/mix")
 # rgb_saver.save(sess, "way3/base/rgb")
 # hs_saver.save(sess, "way3/base/hs")
 # mix_saver.save(sess, "way3/base/mix")
+
+#%% save all
+saver = tf.train.Saver()
+saver.save(sess, "way3/base/all")
