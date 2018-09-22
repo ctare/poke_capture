@@ -645,8 +645,8 @@ mix_saver = tf.train.Saver(var_list=mix_vars)
 #%% save restore
 rgb_saver.restore(sess, "way3/base/rgb")
 hs_saver.restore(sess, "way3/base/hs")
-# mix_saver.restore(sess, "way3/base_mini/mix")
+mix_saver.restore(sess, "way3/base/mix")
 
 # rgb_saver.save(sess, "way3/base/rgb")
-# hs_saver.save(sess, "way3/base_mini/hs")
-# mix_saver.save(sess, "way3/base_mini/mix")
+# hs_saver.save(sess, "way3/base/hs")
+# mix_saver.save(sess, "way3/base/mix")
