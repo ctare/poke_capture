@@ -99,7 +99,7 @@ def affine(img, p1, p2):
     return tfimg
 
 def imread(number):
-    img = Image.open("pokemon/{:03d}.png".format(number))
+    img = Image.open("../pokemon/{:03d}.png".format(number))
     img = np.array(img)
     img = to_black(img).astype(np.uint8)
     return img
@@ -485,16 +485,24 @@ def clustering(tests):
 imgs = np.array([cv2.resize(imread(x), (32, 32)) for x in labels])
 #%%
 # 選択画面の画像
-t_data = debug_img() # ./sample.jpg
-# t_data = debug_img(img) # numpyデータを直接入れる際
-numbers, index = clustering(t_data)
+cap = cv2.VideoCapture("http://10.211.22.54:4747/video")
+while True:
+    # t_data = debug_img() # ./sample.jpg
+    _, img = cap.read()
+    pylab.cla()
+    pylab.clf()
+    try:
+        t_data = debug_img(img) # numpyデータを直接入れる際
+        numbers, index = clustering(t_data)
 
-# print(numbers + 1)
+        # print(numbers + 1)
 
-pylab.subplot(2, 1, 1)
-pylab.axis("off")
-pylab.imshow(pv(imgs[numbers,], 6, 1).astype(np.uint8))
-pylab.subplot(2, 1, 2)
-pylab.axis("off")
-pylab.imshow(pv(t_data[index] * 255, 6, 1).astype(np.uint8))
-pylab.show()
+        pylab.subplot(3, 1, 1)
+        pylab.axis("off")
+        pylab.imshow(pv(imgs[numbers,], 6, 1).astype(np.uint8))
+        pylab.subplot(3, 1, 2)
+        pylab.axis("off")
+        pylab.imshow(pv(t_data[index] * 255, 6, 1).astype(np.uint8))
+    except:
+        pylab.imshow(img[..., ::-1])
+    pylab.pause(0.0001)
